@@ -7,6 +7,8 @@ const state = vi.hoisted(() => ({
   returning: vi.fn(),
   limit: vi.fn(),
   close: vi.fn(),
+  update: vi.fn(),
+  selected: vi.fn(),
 }));
 vi.mock("../database/config", () => ({
   readDatabaseConfig: state.readConfig,
@@ -19,6 +21,10 @@ beforeEach(() => {
   vi.resetModules();
   vi.resetAllMocks();
   state.close.mockResolvedValue(undefined);
+  state.update.mockResolvedValue(undefined);
+  state.selected.mockResolvedValue([
+    { code: "legacy", destination: "https://example.com/path", clickCount: 2 },
+  ]);
   state.readConfig.mockReturnValue({ host: "test" });
   state.returning.mockResolvedValue([{ code: "inserted" }]);
   state.limit.mockResolvedValue([
@@ -26,15 +32,19 @@ beforeEach(() => {
   ]);
   state.createDatabase.mockImplementation(function () {
     return {
-      close: state.close,
+      close: vi.fn(() => state.close()),
       db: {
         insert: () => ({
           values: () => ({
             onConflictDoNothing: () => ({ returning: state.returning }),
           }),
         }),
+        update: () => ({ set: () => ({ where: state.update }) }),
         select: () => ({
-          from: () => ({ where: () => ({ limit: state.limit }) }),
+          from: () => ({
+            where: () =>
+              Object.assign(state.selected(), { limit: state.limit }),
+          }),
         }),
       },
     };
@@ -50,97 +60,138 @@ const unavailable = {
 };
 
 describe("application bootstrap", () => {
-  it("defers configuration until validated operations and safely handles configuration failure", async () => {
+  it("reads configuration immediately and propagates startup configuration errors", async () => {
+    const failure = new Error("invalid startup configuration");
     state.readConfig.mockImplementation(() => {
-      throw new Error("private configuration detail");
+      throw failure;
     });
-    const { shortenURL, resolveShortenedURL } =
-      await import("./bootstrap.server");
-    expect(state.readConfig).not.toHaveBeenCalled();
-    expect(await shortenURL.execute("")).toEqual({
-      ok: false,
-      error: { code: "required", message: "URL is required" },
-    });
-    expect(await resolveShortenedURL.execute(" ")).toEqual({
-      ok: false,
-      error: { code: "invalid_code", message: "Invalid short code" },
-    });
-    expect(state.readConfig).not.toHaveBeenCalled();
-    expect(await shortenURL.execute("https://example.com")).toEqual(
-      unavailable,
-    );
-    expect(await resolveShortenedURL.execute("legacy")).toEqual(unavailable);
-    expect(state.readConfig).toHaveBeenCalledTimes(2);
+
+    await expect(import("./bootstrap.server")).rejects.toBe(failure);
+    expect(state.readConfig).toHaveBeenCalledOnce();
     expect(state.createDatabase).not.toHaveBeenCalled();
+    expect(state.returning).not.toHaveBeenCalled();
+    expect(state.limit).not.toHaveBeenCalled();
   });
 
-  it("initializes once and shares the direct database client across both use cases", async () => {
-    const { shortenURL, resolveShortenedURL } =
-      await import("./bootstrap.server");
-    expect(state.createDatabase).not.toHaveBeenCalled();
-    expect((await shortenURL.execute("https://example.com")).ok).toBe(true);
-    expect((await shortenURL.execute("https://example.com")).ok).toBe(true);
-    expect(await resolveShortenedURL.execute("legacy")).toEqual({
-      ok: true,
-      value: "https://example.com/path",
-    });
+  it("constructs once on import and shares the database across all use cases", async () => {
+    const application = await import("./bootstrap.server");
     expect(state.readConfig).toHaveBeenCalledOnce();
     expect(state.createDatabase).toHaveBeenCalledOnce();
-    expect(state.returning).toHaveBeenCalledTimes(2);
-    expect(state.limit).toHaveBeenCalledOnce();
-  });
-
-  it("returns safe construction failures and retries initialization on a later request", async () => {
-    state.createDatabase.mockImplementationOnce(function () {
-      throw new Error("private pool configuration");
-    });
-    const { shortenURL, resolveShortenedURL } =
-      await import("./bootstrap.server");
-    expect(await shortenURL.execute("https://example.com")).toEqual(
-      unavailable,
-    );
+    expect(state.createDatabase.mock.calls[0][0]).toEqual({ host: "test" });
     expect(state.returning).not.toHaveBeenCalled();
-    expect(await resolveShortenedURL.execute("legacy")).toEqual({
-      ok: true,
-      value: "https://example.com/path",
-    });
-    expect(state.readConfig).toHaveBeenCalledTimes(2);
-    expect(state.createDatabase).toHaveBeenCalledTimes(2);
-    expect(state.limit).toHaveBeenCalledOnce();
-  });
-  it("keeps database instances scoped to each application bootstrap", async () => {
-    const { bootstrapApplication } = await import("./bootstrap.server");
-    const first = bootstrapApplication();
-    const second = bootstrapApplication();
-    expect(state.createDatabase).not.toHaveBeenCalled();
-    expect((await first.shortenURL.execute("https://first.example")).ok).toBe(
-      true,
-    );
-    expect((await first.resolveShortenedURL.execute("legacy")).ok).toBe(true);
-    expect(state.createDatabase).toHaveBeenCalledOnce();
-    expect((await second.shortenURL.execute("https://second.example")).ok).toBe(
-      true,
-    );
-    expect(state.createDatabase).toHaveBeenCalledTimes(2);
-    await first.close();
-    await second.close();
-    expect(state.close).toHaveBeenCalledTimes(2);
-  });
+    expect(state.selected).not.toHaveBeenCalled();
 
-  it("does not initialize the database when closing an unused application", async () => {
-    const { close } = await import("./bootstrap.server");
-    await close();
-    expect(state.readConfig).not.toHaveBeenCalled();
-    expect(state.createDatabase).not.toHaveBeenCalled();
-    expect(state.close).not.toHaveBeenCalled();
-  });
-
-  it("exposes cleanup that waits for the initialized database to close", async () => {
-    const { bootstrapApplication } = await import("./bootstrap.server");
-    const application = bootstrapApplication();
     expect(
       (await application.shortenURL.execute("https://example.com")).ok,
     ).toBe(true);
+    expect(
+      (await application.shortenURL.execute("https://example.com")).ok,
+    ).toBe(true);
+    expect(await application.resolveShortenedURL.execute("legacy")).toEqual({
+      ok: true,
+      value: "https://example.com/path",
+    });
+    expect(state.update).not.toHaveBeenCalled();
+    expect(await application.redirectShortenedURL.execute("legacy")).toEqual({
+      ok: true,
+      value: "https://example.com/path",
+    });
+    expect(await application.getRecentLinks.execute(["legacy"])).toEqual({
+      ok: true,
+      value: [
+        {
+          code: "legacy",
+          destination: "https://example.com/path",
+          clickCount: 2,
+        },
+      ],
+    });
+    expect(state.update).toHaveBeenCalledOnce();
+    expect(state.returning).toHaveBeenCalledTimes(2);
+    expect(state.limit).toHaveBeenCalledTimes(2);
+    expect(state.selected).toHaveBeenCalledTimes(3);
+    expect((await import("./bootstrap.server")).shortenURL).toBe(
+      application.shortenURL,
+    );
+    expect(state.readConfig).toHaveBeenCalledOnce();
+    expect(state.createDatabase).toHaveBeenCalledOnce();
+  });
+
+  it("propagates database construction errors during startup without retrying", async () => {
+    const failure = new Error("invalid pool configuration");
+    state.createDatabase.mockImplementationOnce(function () {
+      throw failure;
+    });
+
+    await expect(import("./bootstrap.server")).rejects.toBe(failure);
+    expect(state.readConfig).toHaveBeenCalledOnce();
+    expect(state.createDatabase).toHaveBeenCalledOnce();
+    expect(state.returning).not.toHaveBeenCalled();
+    expect(state.limit).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid input without querying the eagerly constructed database", async () => {
+    const application = await import("./bootstrap.server");
+    expect(await application.shortenURL.execute("")).toEqual({
+      ok: false,
+      error: { code: "required", message: "URL is required" },
+    });
+    expect(await application.resolveShortenedURL.execute(" ")).toEqual({
+      ok: false,
+      error: { code: "invalid_code", message: "Invalid short code" },
+    });
+    expect(state.createDatabase).toHaveBeenCalledOnce();
+    expect(state.returning).not.toHaveBeenCalled();
+    expect(state.selected).not.toHaveBeenCalled();
+    expect(state.update).not.toHaveBeenCalled();
+  });
+
+  it("returns safe runtime storage failures without constructing another database", async () => {
+    const application = await import("./bootstrap.server");
+    state.returning.mockRejectedValueOnce(new Error("private write failure"));
+    state.limit.mockRejectedValueOnce(new Error("private read failure"));
+    expect(await application.shortenURL.execute("https://example.com")).toEqual(
+      unavailable,
+    );
+    expect(await application.resolveShortenedURL.execute("legacy")).toEqual(
+      unavailable,
+    );
+    expect(state.createDatabase).toHaveBeenCalledOnce();
+  });
+
+  it("scopes each explicit bootstrap and its cleanup to its own database", async () => {
+    const { bootstrapApplication } = await import("./bootstrap.server");
+    const first = bootstrapApplication();
+    const second = bootstrapApplication();
+    expect(state.readConfig).toHaveBeenCalledTimes(3);
+    expect(state.createDatabase).toHaveBeenCalledTimes(3);
+    const [sharedDatabase, firstDatabase, secondDatabase] =
+      state.createDatabase.mock.results.map((result) => result.value);
+    expect(firstDatabase.db).not.toBe(secondDatabase.db);
+    expect((await first.shortenURL.execute("https://first.example")).ok).toBe(
+      true,
+    );
+    expect((await second.resolveShortenedURL.execute("legacy")).ok).toBe(true);
+    await first.close();
+    expect(firstDatabase.close).toHaveBeenCalledOnce();
+    expect(secondDatabase.close).not.toHaveBeenCalled();
+    expect(sharedDatabase.close).not.toHaveBeenCalled();
+    await second.close();
+    expect(secondDatabase.close).toHaveBeenCalledOnce();
+    expect(state.createDatabase).toHaveBeenCalledTimes(3);
+  });
+
+  it("closes an eagerly constructed application even when no use case ran", async () => {
+    const { close } = await import("./bootstrap.server");
+    expect(state.createDatabase).toHaveBeenCalledOnce();
+    await close();
+    expect(state.close).toHaveBeenCalledOnce();
+    expect(state.returning).not.toHaveBeenCalled();
+    expect(state.selected).not.toHaveBeenCalled();
+  });
+
+  it("waits for database cleanup to finish", async () => {
+    const application = await import("./bootstrap.server");
     let finishClose!: () => void;
     state.close.mockReturnValueOnce(
       new Promise<void>((resolve) => {

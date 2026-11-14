@@ -30,7 +30,8 @@ short links retain the `/s/:code` route. Host database operations use
 `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, and
 `POSTGRES_PASSWORD` from the root `.env` or explicit process environment.
 Explicit environment settings take precedence. Turbo passes these settings through
-to development/build tasks. The consumer reads configuration lazily on storage use.
+to development/build tasks. Web reads and validates configuration when the server
+bootstrap module is imported, before handling requests.
 
 The default local database is `url_shortener_dev` at `127.0.0.1:5432`, with user
 `url_shortener` and password `local_password`. These are local development defaults.
@@ -56,8 +57,11 @@ changing the host development `PUBLIC_URL`.
 PostgreSQL is the sole runtime store. Restarting the web process or PostgreSQL
 preserves links. `docker compose down` preserves the volume;
 `docker compose down --volumes` deletes its data. Web has no database health dependency:
-the home page remains accessible during an outage, while creation and resolution
-report HTTP 503. Apply migrations before creating/resolving links.
+after successful application initialization, the home page can render without a
+database query, while failed creation and resolution queries report HTTP 503.
+Invalid startup configuration or database-construction errors prevent initialization;
+they are not converted into request-level 503 responses. Apply migrations before
+creating/resolving links.
 
 ## Architecture and behavior
 
@@ -73,11 +77,15 @@ The module’s `infrastructure/generation` and `infrastructure/persistence` dire
 own the secure Nano ID adapter and PostgreSQL adapter/schema. They are exported through
 `@url-shortener/engine/infrastructure`; the core engine entrypoint has no vendor imports.
 Web’s `app/bootstrap.server.ts` exposes `bootstrapApplication()`, which constructs
-the database, PostgreSQL repository, Nano ID generator, and both use cases explicitly.
-Database/repository initialization remains lazy, and configuration failures become
-safe application results. The bootstrap returns the use cases plus `close()`.
-Routes use one shared bootstrap instance. Cleanup does not initialize an unused database;
-after initialization it awaits pool shutdown. Closing is terminal: stop serving requests
+the database, PostgreSQL repository, Nano ID generator, and shortening, resolution,
+redirect-counting, and recent-link use cases explicitly. Construction is eager:
+importing the module creates the shared application instance, and each explicit
+`bootstrapApplication()` call creates an independent instance. Configuration and
+construction errors propagate at startup without automatic retry. Constructing
+the pool/client does not itself execute a database query or verify connectivity.
+Runtime repository failures become safe application results.
+The bootstrap returns the use cases plus `close()`, which delegates to its database
+and waits for pool shutdown, even when no use case has run. Stop serving requests
 before calling `close()` and do not reuse that application afterward. Engine infrastructure does not read environment
 settings or manage connection lifecycle. Invalid input causes no generation or repository access.
 No import, client construction, health check, or server startup applies migrations.
@@ -95,10 +103,11 @@ looked up exactly, without trimming or case changes.
 
 | Outcome | HTTP response |
 | --- | --- |
-| Created | 200 with `{ shortenedUrl }` |
+| Created | 200 with `{ shortenedUrl, shortCode }` |
 | Invalid destination/code | Existing 400 validation feedback |
 | Three collisions | 503: `Could not create a short link. Please try again.` |
-| Storage/configuration failure | 503: `Service temporarily unavailable. Please try again.` |
+| Runtime storage failure | 503: `Service temporarily unavailable. Please try again.` |
+| Creation allowance exhausted | 429 with `Retry-After`: `Too many requests. Please try again shortly.` |
 | Found | 302 to the exact stored destination |
 | Missing after a successful query | 404 `Not Found` |
 
@@ -143,6 +152,8 @@ pnpm test:database
 Vitest tests cover domain invariants, deterministic injected generator/repository
 behavior, three-attempt exhaustion, immediate outage handling, exact lookups,
 adapter error translation, route HTTP responses, and form input/result preservation.
+Bootstrap tests cover eager initialization, startup error propagation, shared and
+independent application instances, runtime storage errors, and awaited cleanup.
 They do not depend on probabilistic Nano ID collisions. Run focused tests with
 `pnpm --filter @url-shortener/engine test` or `pnpm --filter web test:watch`.
 

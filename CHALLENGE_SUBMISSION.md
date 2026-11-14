@@ -2,173 +2,89 @@
 
 ## What I Did
 
+**Estimated total effort: 2 hours 22 minutes.** This is a retrospective estimate,
+not a measured time log, and exceeds the challenge's suggested approximately
+2-hour timebox.
+
 - [10 min] Set up CortexDB project memory and knowledge graph, and added agent instructions in `AGENTS.md` to preserve context and guide implementation. See "AI Usage" for details.
-- [15 min] Get familiar with the codebase and run the application locally.
-- Extracted custom React components and separated the shortener's controller from its view, preserving the existing behavior and design.
-- Added URL domain objects and server validation with shared result types, keeping the current in-memory storage.
+- [15 min] Got familiar with the codebase and ran the application locally.
+- [18 min] Restyled the UI, extracted reusable React components, and separated the shortener's controller from its view.
+- [20 min] Added URL domain objects, server validation, application use cases, and shared result types following DDD and hexagonal boundaries.
+- [30 min] Replaced in-memory URL storage with PostgreSQL/Drizzle persistence, explicit migrations, repository ports, and collision-safe Nano ID generation.
+- [22 min] Added persistent click counts and a responsive browser-local history panel for the latest 50 links, with count refresh on window focus.
+- [12 min] Added independent form/history loading states, duplicate-submission prevention, and a shared server-side limit of 20 creation attempts per minute per process.
+- [15 min] Added domain, adapter, route, component, and bootstrap tests; updated setup instructions and documented verification limitations below.
 
 ## Decisions and Rationale
 
-Decisions for the [component refactor](specs/reusable-components.md):
+- **UI:** custom reusable controls avoid unnecessary dependencies. Controller/view separation keeps rendering separate from application logic; light and dark themes follow system preferences.
+- **Domain boundaries:** engine use cases own shortening and resolution; React Router owns HTTP/UI. Zod checks input shape, domain objects enforce HTTP/HTTPS destinations, and shared `Result` types represent expected failures.
+- **Persistence:** PostgreSQL provides durable storage and uniqueness constraints. Drizzle offers typed SQL/schema access and explicit migrations instead of the suggested Prisma. A separate database package isolates connection lifecycle, at the cost of extra scaffolding.
+- **Composition:** web's bootstrap eagerly validates configuration and wires the database, adapters, and use cases. Startup errors propagate; runtime storage failures return safe HTTP 503 responses. PostgreSQL is the sole store, with no in-memory fallback or automatic migrations.
+- **Priorities:** I emphasized UI, domain boundaries, and persistence. Architecture and AI workflow setup reduced the time available for final integrated verification.
 
-- **Custom components over shadcn/ui or Radix:** the current controls are simple, so reusing their markup and CSS avoids unnecessary dependencies.
-- **Controller–view separation:** keep application logic separate from rendering and reusable components.
-- **Colocate by responsibility:** keep shared controls in individual `components/ui` folders, and page controllers/views beside their route module so page-specific code stays together.
-- **Preserve behavior and design:** isolate the refactor from new features, bug fixes, and visual changes.
-- **Focused verification:** add colocated Vitest/React Testing Library unit tests for the controller, view, and controls, alongside typecheck, build, and browser checks. Isolated route stubs keep unit tests independent of server storage.
+## Behavior and Tradeoffs
 
-Decisions for the [URL domain model](specs/url-domain-model.md):
-
-- **Separate syntax from policy:** shared `URL` parses absolute URLs across protocols and exposes the protocol; `ShortenedURL` enforces HTTP/HTTPS destinations through guarded creation. Repository abstraction and PostgreSQL persistence were subsequently implemented in the short-code feature below.
-- **Explicit validation results:** `safeParse` accepts a string and returns the shared `Result` contract instead of throwing for invalid URL strings. Application use cases now reject missing/non-string input; the HTTP boundary maps validation errors to HTTP 400 and the existing inline feedback.
-- **Test the boundaries:** pure domain tests cover validation and value equality; route tests verify rejection without storage changes and preserve successful shortening/redirect behavior.
-
-Decisions for the [shortener use cases](specs/shortener-use-cases.md):
-
-- **Separate orchestration from HTTP:** use cases validate application input and coordinate shortening/lookup; routes construct public links, responses, and redirects.
-- **Keep domain rules authoritative:** Zod checks string/nonblank input; the shared URL validates structure and the aggregate validates destination policy before code generation. Expected failures use the shared `Result` contract, preserving existing HTTP feedback.
-- **Organize by module:** shortener code lives under `modules/url-shortener`, with application `usecases` and `validations` and the aggregate directly in `domain`. Generic URL and results live under `shared/value-objects` and `shared/types`. The existing map and generator remain until repository abstraction is introduced.
-
-Decisions for the [database foundation](specs/database-foundation.md):
-
-- **Keep infrastructure separate:** a private PostgreSQL/Drizzle package owns its pool and explicit lifecycle; consumers provide configuration and schemas. The generic package stays independent; the short-code feature below connects the web consumer to it.
-- **Use Drizzle Kit directly:** the package integration test generates temporary schema/configuration/SQL fixtures and runs explicit migration commands. There is no demo consumer workspace, committed fixture migration, or custom migration executor.
+- **Short codes:** ten case-sensitive alphanumeric characters provide 62^10 possibilities. Atomic inserts enforce uniqueness without overwriting links. Only code conflicts retry, with three total attempts; exhaustion returns HTTP 503: `Could not create a short link. Please try again.` Each successful submission creates a separate link.
+- **Statistics:** successful GET resolutions count, including bots and repeat visits. Invalid/missing codes and non-GET requests do not. Counts represent redirect attempts, not confirmed destination loads; recording failures still redirect, so totals can undercount.
+- **Recent links:** localStorage remembers the latest 50 codes in the current browser; destinations and counts come from PostgreSQL. History does not sync across devices. Clearing storage or evicting an entry does not delete its persisted link. Browser selection is not access control.
+- **Loading:** form and history progress are independent. Refresh preserves the visible history; pending submissions hide stale feedback and prevent duplicate submissions.
+- **Abuse prevention:** a process-wide fixed window allows 20 creation attempts per minute, including invalid inputs and later failures. Excess requests return HTTP 429 with `Retry-After`. One caller can exhaust everyone's allowance; it resets on restart, is not coordinated across instances, and does not filter malicious destinations. Redirects and history remain available.
 
 ## What I Would Do With More Time
 
-- **Refine interface segregation:** split the existing `ShortenerRepository` into narrower read and write ports so shortening depends only on `insert` and resolution only on `findByCode`. This would also simplify test doubles by removing unused methods. The PostgreSQL adapter could continue implementing both ports, as it already does for the separate click-recording and recent-links interfaces.
+- Complete integrated verification and retain reproducible application-level PostgreSQL tests for uniqueness, click-count concurrency, and restart durability.
+- Improve abuse controls with caller isolation and coordination across instances.
+- Split `ShortenerRepository` into narrower read/write ports to simplify dependencies and test doubles.
 
 ## AI Usage
 
-I started by using an AI coding agent to understand the existing codebase and set up CortexDB as persistent project memory. The stored context covers the challenge requirements, architecture, file responsibilities, request flow, and known baseline limitations. A knowledge graph records explicit relationships between files and symbols, such as imports, route registration, and shared-state access, with source references.
+I defined and approved scope and design choices; AI agents implemented changes and
+ran checks. Agent validation does not mean I personally repeated every check.
 
-I also added `AGENTS.md` with repository structure, development commands, coding conventions, and verification guidance. Its CortexDB instructions tell the agent to retrieve relevant context before non-trivial changes, check recalled facts against the current source, and preserve verified decisions with their provenance. They distinguish static inspection from executed checks and require reading saved information back to verify persistence.
-
-The goal of this setup is to preserve context across sessions and reduce repeated exploration while keeping later implementation grounded in the code and challenge requirements. The initial analysis used static source inspection; application tests, builds, and Docker startup had not yet been run.
-
-Example prompt used to retrieve the saved project context:
+I used CortexDB to preserve source-backed project context and `AGENTS.md` to guide
+implementation and verification. One actual retrieval prompt was:
 
 > Retrieve information from cortex db
 
-Additional example prompts for this workflow:
+I used [start-feature](.agents/skills/start-feature/SKILL.md) to clarify scope and
+write specifications, and [implement-spec](.agents/skills/implement-spec/SKILL.md)
+for separate planning, implementation, and independent validation. The
+[hexagonal-architecture skill](.agents/skills/hexagonal-architecture/SKILL.md)
+guided domain/infrastructure boundaries. Specifications remain in [specs](specs/).
 
-- "Recall the URL shortener's architecture and known limitations from CortexDB, then verify the relevant facts against the current source."
-- "Use the CortexDB knowledge graph to identify which routes read or write shortened URLs. Include the source references for each relationship."
+For the UI, I chose the palette and scope; the agent helped refine accessibility,
+error states, and responsive behavior. Early browser checks covered light/dark
+themes and mobile/desktop widths. Behavior changes used failing tests before
+implementation where applicable. I also requested removal of extra database
+test scaffolding and the separate web integration runner; this reduced retained
+integration coverage. Live PostgreSQL checks for click statistics were explicitly
+excluded from that feature's scope.
 
-For relationship queries, the agent first calls `graph_schema` to inspect the stored node and edge types, then uses `graph_cypher_query` to retrieve explicit connections.
+## Current Verification
 
-![Project knowledge graph in CortexDB](screenshots/Screenshot%202026-11-14%20at%2009.52.46.png)
-
-_Project knowledge graph in CortexDB._
-
-### UI Restyling Specification
-
-I used the AI coding agent to draft and refine a short, high-level [UI restyling specification](specs/ui-restyling.md) before starting implementation. I defined the goal and scope: improve the appearance, remove decorative characters and rotated boxes, and preserve existing functionality without adding components.
-
-I established a light-mode color palette using off-white, dark green, and lime, then adapted the same colors for dark mode. Both themes follow the system preference through CSS. The agent calculated contrast ratios for the proposed text and button color pairs to check their readability.
-
-I then asked the agent to compare the spec against the existing code and identify inconsistencies and gaps. We discussed the findings one by one and updated the spec with the agreed changes: coverage of both inline errors and full error pages, long-content handling, keyboard focus, and centralized CSS classes that replace conflicting styling utilities. Functional issues found during the review stayed outside the restyling scope.
-
-This process produced a concise specification with explicit boundaries and acceptance criteria to guide implementation.
-
-#### Implementation Process
-
-I asked the main agent to coordinate the work through separate planning, implementation, and validation subagents:
-
-1. **Read the spec.** The main agent read the agreed specification and checked the repository state to establish the scope and preserve existing work.
-2. **Create the plan.** The main agent passed the spec to a planning subagent. It retrieved relevant context from CortexDB, verified it against the current code, and identified the required changes, affected files, behavior to preserve, and verification steps.
-3. **Implement the changes.** The planning subagent returned its findings to the main agent, which passed the spec and plan to a new implementation subagent. That agent updated the CSS and existing component classes, removed the decorative characters, and ran typecheck and build checks.
-4. **Validate independently.** Once implementation was complete, the main agent assigned a new validation subagent to compare the spec, planned tasks, and actual changes. It checked source-level behavior preservation and exercised the application in a browser across light and dark themes at mobile and desktop widths.
-
-The independent validation found no blocking mismatches, so no correction round was needed. Typecheck, build, and browser checks passed. The main agent reviewed the results and representative screenshots before reporting completion.
-
-I then packaged this workflow as the reusable [implement-spec skill](.agents/skills/implement-spec/SKILL.md). It defines the agent handoffs, CortexDB context retrieval, implementation boundaries, independent validation, and correction process for future specifications. It can be invoked with `Use $implement-spec for specs/my-feature.md`.
-
-### Reusable Components
-
-I used [start-feature](.agents/skills/start-feature/SKILL.md) to clarify the component refactor and write its spec, then used the planning, implementation, and independent validation workflow above.
-
-### URL Domain Model
-
-I used [start-feature](.agents/skills/start-feature/SKILL.md) and the installed [hexagonal-architecture skill](.agents/skills/hexagonal-architecture/SKILL.md) to define a small domain-first step. The spec adopts a generic `Result` type inspired by my existing utility code and keeps HTTP and storage concerns outside the domain objects. After approving the spec, I used [implement-spec](.agents/skills/implement-spec/SKILL.md) for planning, implementation, and independent validation. The implementation first demonstrated failing validation/trim tests against the original action, then added domain objects and server integration.
-
-### Shortener Use Cases
-
-I used the same specification workflow to extract `ShortenURLUseCase` and `ResolveShortenedURLUseCase`, then included the module/shared folder organization during implementation. The implementation first reproduced the missing invalid-code response with a failing route test, then added Zod validation and use-case tests while preserving the existing storage and HTTP contracts.
-
-### Database Foundation
-
-I approved the database foundation specification, then used the same separate planning,
-implementation and independent validation workflow. The agent used the hexagonal
-architecture skill to preserve the domain/infrastructure boundary and added failing
-public-API tests before implementing the database lifecycle. The concrete `PostgresDatabase` class owns
-the pool and exposes a typed client, health checks, and cleanup. Integration checks use real PostgreSQL
-and explicit Drizzle Kit commands with temporary fixtures. After reviewing the first
-implementation, I removed the extra test-consumer workspace to reduce scaffolding. The later short-code feature below completes repository integration and persistent shortened links.
-
-### Short-code generation and persistence
-
-I approved the [short-code specification](specs/short-code-generation.md) and asked
-for DDD and hexagonal architecture. Separate planning, implementation and independent
-validation phases use the implement-spec workflow. The implementation introduces
-injected application ports and module-owned infrastructure in the engine: a secure
-Nano ID adapter, an atomic PostgreSQL repository, and its schema. A separate
-`@url-shortener/engine/infrastructure` entrypoint keeps vendor imports out of the core.
-Web’s `app/bootstrap.server.ts` explicitly constructs the database, repository,
-generator, and use cases one by one. The bootstrap preserves lazy database
-configuration, safe failure handling, shared route instances, and terminal database
-cleanup; web also retains explicit migration files/execution.
-The generic database package is unchanged.
-The former shared Map and two-character generator are removed.
-
-The implementation first observed deterministic failures for the new collision,
-storage and async route contracts, then preserved the existing validation/redirect
-cases while adding retry, outage and form feedback tests. During implementation, isolated PostgreSQL checks verified competing inserts, migrations,
-restarts, outages, and host/container cross-resolution. The separate web integration
-runner was subsequently removed at my request; application tests stay colocated.
-The retained database command covers the generic database package only.
-
-Three total attempts bound collision handling. Only a code uniqueness conflict retries;
-other storage/configuration failures return safe HTTP 503 messages. PostgreSQL remains
-the sole runtime store, while lazy server composition keeps home rendering independent
-of database availability. Every successful submission gets its own persisted link.
-
-### Click statistics
-
-I approved [the click statistics specification](specs/click-statistics.md) and
-requested a focused implementation without unrelated refactoring, branches,
-commits, dependencies, or live PostgreSQL verification. AI assisted with separate
-planning and implementation, retaining the engine ports/use cases and web
-controller/view boundaries. The feature adds best-effort redirect counting,
-selected-code metadata reads, browser-local recent history, and an explicit
-zero-default migration. Deterministic tests first failed for missing counting and
-storage behavior before implementation.
-
-Unit and route tests check repeated GETs, excluded requests, failed-count
-redirects, selected-code filtering, and browser persistence. SQL-shape checks and
-migration inspection are structural evidence only; real PostgreSQL concurrency
-and restart durability were not verified for this feature. The existing six
-bootstrap tests fail because their lazy-initialization expectations differ from
-the current eager bootstrap; this unrelated behavior was left unchanged.
-
-### Loading feedback
-
-The home controller derives form submission and recent-history fetcher states
-from React Router. The view shows shortening and history progress independently,
-retaining the browser history during refresh and hiding stale form feedback while
-a new shortening request is pending. Controlled route tests cover pending,
-completion, duplicate submission, and refresh behavior.
-
-### Creation abuse prevention
-
-URL creation now uses a shared in-process fixed-window allowance of 20 attempts
-per 60 seconds. The HTTP route consumes an attempt before parsing input, so
-invalid submissions and later shortening failures count. Excess requests receive
-HTTP 429, a rounded-up `Retry-After` value, and inline feedback. Redirects and
-browser history remain available. The allowance resets on process restart and is
-not shared across processes. Deterministic clock and route tests cover expiry,
-rejections, request ordering, and preserved form input.
+- Last recorded checks: `pnpm test` passed 215 tests (37 database, 100 engine, 78 web); `pnpm typecheck` and `pnpm build` passed. These commands reproduce the retained checks.
+- Tests include mocked adapters and structural SQL assertions; their count does not establish live PostgreSQL coverage. Bootstrap tests were reconciled with eager initialization and cover configuration, shared instances, cleanup, and runtime failures.
+- `pnpm test:database` requires Docker and Compose 2.24.4+ and covers only the generic database package.
+- Earlier application-level PostgreSQL checks covered collisions, migrations, restarts, outages, and host/container resolution. Those results are historical; the removed runner is not available to reproduce them.
+- Click-count concurrency and restart durability remain unverified against live PostgreSQL. Final integrated browser checks have not been repeated.
 
 ## Feedback
 
-<!-- Any feedback on the challenge? Was it clear? Too easy/hard? Suggestions? -->
+**Final Docker verification was not completed because I ran out of time.** Earlier
+container checks do not verify the final submission. The remaining check is to
+follow [Docker setup](README.md#docker-setup), apply migrations, and confirm startup,
+shortening, redirects, and statistics.
+
+The requirements cover a broad range of frontend, backend, persistence, and
+security concerns for an approximately two-hour exercise. The guidance to
+prioritize and explain tradeoffs is useful; identifying a smaller core set of
+requirements and marking the rest as stretch goals would make the expected scope
+clearer.
+
+I did not feel entirely comfortable with the starting React Router SSR setup. I
+would have preferred a more explicitly structured frontend and backend, with a
+dedicated server layer such as Express. Without that separate layer, I found the
+organization of server responsibilities less familiar. This is a preference about
+structure and familiarity, rather than a limitation of React Router's ability to
+handle server-side functionality.
