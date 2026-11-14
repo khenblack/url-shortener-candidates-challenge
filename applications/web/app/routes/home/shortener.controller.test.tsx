@@ -184,3 +184,182 @@ it("refreshes displayed counts when returning to the app window", async () => {
   fireEvent.focus(window);
   expect(recentRequests).toHaveLength(2);
 });
+
+it("keeps a pending shortening request single and hides the prior result", async () => {
+  const user = userEvent.setup();
+  let finishAction!: (value: { shortenedUrl: string }) => void;
+  const action = vi
+    .fn()
+    .mockResolvedValueOnce({ shortenedUrl: "https://sho.rt/s/old" })
+    .mockImplementationOnce(
+      () => new Promise((resolve) => (finishAction = resolve)),
+    );
+  writeRecentCodes(localStorage, ["old"]);
+  renderController(action);
+
+  const input = await screen.findByRole("textbox");
+  expect(await screen.findByText("https://example.com/old")).toBeVisible();
+  await user.type(input, "https://example.com/first");
+  await user.click(screen.getByRole("button", { name: "SHORTEN IT" }));
+  await screen.findAllByRole("link", { name: "https://sho.rt/s/old" });
+  await user.clear(input);
+  await user.type(input, "https://example.com/new");
+  await user.click(screen.getByRole("button", { name: "SHORTEN IT" }));
+
+  expect(action).toHaveBeenCalledTimes(2);
+  expect(
+    await screen.findByRole("button", { name: "Shortening…" }),
+  ).toBeDisabled();
+  expect(screen.queryByText("Your shortened URL:")).not.toBeInTheDocument();
+  expect(screen.getByText("https://example.com/old")).toBeVisible();
+  expect(input).toHaveValue("https://example.com/new");
+  await user.click(screen.getByRole("button", { name: "Shortening…" }));
+  await user.keyboard("{Enter}");
+  expect(action).toHaveBeenCalledTimes(2);
+
+  finishAction({ shortenedUrl: "https://sho.rt/s/new" });
+  expect(
+    await screen.findByRole("link", { name: "https://sho.rt/s/new" }),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "SHORTEN IT" })).toBeEnabled();
+});
+
+it("shows initial history loading without the empty state", async () => {
+  writeRecentCodes(localStorage, ["aa"]);
+  let finishHistory!: (value: {
+    links: { code: string; destination: string; clickCount: number }[];
+  }) => void;
+  const Stub = createRoutesStub([
+    {
+      path: "/recent-links",
+      loader: () => new Promise((resolve) => (finishHistory = resolve)),
+    },
+    {
+      path: "/",
+      Component: ShortenerController,
+      HydrateFallback: () => null,
+      loader: () => ({ baseUrl: "https://sho.rt/s/" }),
+    },
+  ]);
+
+  render(<Stub initialEntries={["/"]} />);
+  expect(await screen.findByText("Loading history…")).toBeVisible();
+  expect(
+    screen.queryByText("Links you create in this browser will appear here."),
+  ).not.toBeInTheDocument();
+  finishHistory({
+    links: [
+      { code: "aa", destination: "https://example.com/aa", clickCount: 1 },
+    ],
+  });
+  expect(await screen.findByText("https://example.com/aa")).toBeVisible();
+  expect(screen.queryByText("Loading history…")).not.toBeInTheDocument();
+});
+
+it("refreshes history in place without blocking the form or prior result", async () => {
+  writeRecentCodes(localStorage, ["aa"]);
+  let finishRefresh!: (value: {
+    links: { code: string; destination: string; clickCount: number }[];
+  }) => void;
+  let calls = 0;
+  const Stub = createRoutesStub([
+    {
+      path: "/recent-links",
+      loader: () => {
+        calls += 1;
+        return calls === 1
+          ? {
+              links: [
+                {
+                  code: "aa",
+                  destination: "https://example.com/aa",
+                  clickCount: 1,
+                },
+              ],
+            }
+          : new Promise((resolve) => (finishRefresh = resolve));
+      },
+    },
+    {
+      path: "/",
+      Component: ShortenerController,
+      HydrateFallback: () => null,
+      loader: () => ({ baseUrl: "https://sho.rt/s/" }),
+    },
+  ]);
+  render(<Stub initialEntries={["/"]} />);
+  expect(await screen.findByText("1 click")).toBeVisible();
+
+  fireEvent.focus(window);
+  expect(await screen.findByText("Refreshing…")).toBeVisible();
+  expect(screen.getByText("1 click")).toBeVisible();
+  expect(screen.getByRole("button", { name: "SHORTEN IT" })).toBeEnabled();
+  finishRefresh({
+    links: [
+      { code: "aa", destination: "https://example.com/aa", clickCount: 4 },
+    ],
+  });
+  expect(await screen.findByText("4 clicks")).toBeVisible();
+  expect(screen.queryByText("Refreshing…")).not.toBeInTheDocument();
+});
+
+it("restores the form with the returned error after a pending failure", async () => {
+  let finishAction!: (value: { error: string }) => void;
+  const action = vi.fn(
+    () => new Promise<{ error: string }>((resolve) => (finishAction = resolve)),
+  );
+  const user = userEvent.setup();
+  renderController(action);
+
+  await user.type(await screen.findByRole("textbox"), "https://example.com");
+  await user.click(screen.getByRole("button", { name: "SHORTEN IT" }));
+  expect(
+    await screen.findByRole("button", { name: "Shortening…" }),
+  ).toBeDisabled();
+  finishAction({ error: "URL is required" });
+
+  expect(await screen.findByText("URL is required")).toBeVisible();
+  expect(screen.getByRole("button", { name: "SHORTEN IT" })).toBeEnabled();
+});
+
+it("ends a failed history refresh and shows the existing error feedback", async () => {
+  writeRecentCodes(localStorage, ["aa"]);
+  let finishRefresh!: (value: { error: string }) => void;
+  let calls = 0;
+  const Stub = createRoutesStub([
+    {
+      path: "/recent-links",
+      loader: () => {
+        calls += 1;
+        return calls === 1
+          ? {
+              links: [
+                {
+                  code: "aa",
+                  destination: "https://example.com/aa",
+                  clickCount: 1,
+                },
+              ],
+            }
+          : new Promise((resolve) => (finishRefresh = resolve));
+      },
+    },
+    {
+      path: "/",
+      Component: ShortenerController,
+      HydrateFallback: () => null,
+      loader: () => ({ baseUrl: "https://sho.rt/s/" }),
+    },
+  ]);
+
+  render(<Stub initialEntries={["/"]} />);
+  expect(await screen.findByText("1 click")).toBeVisible();
+  fireEvent.focus(window);
+  expect(await screen.findByText("Refreshing…")).toBeVisible();
+  finishRefresh({ error: "History could not be refreshed." });
+
+  expect(
+    await screen.findByText("History could not be refreshed."),
+  ).toBeVisible();
+  expect(screen.queryByText("Refreshing…")).not.toBeInTheDocument();
+});

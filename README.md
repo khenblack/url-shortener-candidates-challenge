@@ -166,6 +166,9 @@ removes the selection. Empty history never requests a global listing. Storage
 restrictions leave shortening usable, with history retained only for the current
 page when writing is unavailable. Returning after opening a short link refreshes
 the displayed counts from the server without requiring a page reload.
+The page shows “Loading history…” for the first selected-code request and
+“Refreshing…” for later requests while keeping loaded links visible. Shortening
+shows “Shortening…” and disables submission until the request completes.
 
 Feature checks cover application counting, HTTP exclusions and failure behavior,
 selected-code queries, SQL shape, and browser-history persistence. The migration

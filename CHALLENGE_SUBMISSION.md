@@ -151,6 +151,14 @@ and restart durability were not verified for this feature. The existing six
 bootstrap tests fail because their lazy-initialization expectations differ from
 the current eager bootstrap; this unrelated behavior was left unchanged.
 
+### Loading feedback
+
+The home controller derives form submission and recent-history fetcher states
+from React Router. The view shows shortening and history progress independently,
+retaining the browser history during refresh and hiding stale form feedback while
+a new shortening request is pending. Controlled route tests cover pending,
+completion, duplicate submission, and refresh behavior.
+
 ## Feedback
 
 <!-- Any feedback on the challenge? Was it clear? Too easy/hard? Suggestions? -->

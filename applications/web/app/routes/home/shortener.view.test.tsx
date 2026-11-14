@@ -70,4 +70,26 @@ describe("ShortenerView", () => {
     expect(screen.getByText("URL is required")).toBeVisible();
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
+
+  it("keeps the form result and loaded links visible while history refreshes", () => {
+    renderView({
+      shortenedUrl: "https://sho.rt/s/result",
+      isRefreshingRecentLinks: true,
+      recentLinks: [
+        {
+          code: "aa",
+          destination: "https://example.com/aa",
+          clickCount: 3,
+        },
+      ],
+    });
+
+    expect(screen.getByText("Refreshing…")).toBeVisible();
+    expect(screen.getByRole("button", { name: "SHORTEN IT" })).toBeEnabled();
+    expect(
+      screen.getByRole("link", { name: "https://sho.rt/s/result" }),
+    ).toBeVisible();
+    expect(screen.getByText("https://example.com/aa")).toBeVisible();
+    expect(screen.getByText("3 clicks")).toBeVisible();
+  });
 });

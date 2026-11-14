@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
-import { useActionData, useFetcher, useLoaderData } from "react-router";
+import {
+  useActionData,
+  useFetcher,
+  useLoaderData,
+  useNavigation,
+} from "react-router";
 import type { action, loader } from "./route";
 import type { loader as recentLinksLoader } from "../recent-links/route";
 import { ShortenerView } from "./shortener.view";
@@ -12,6 +17,10 @@ import {
 export function ShortenerController() {
   const { baseUrl } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
+  const navigation = useNavigation();
+  const isShortening =
+    navigation.state !== "idle" &&
+    navigation.formMethod?.toUpperCase() === "POST";
   const [codes, setCodes] = useState<string[]>([]);
   const recentLinks = useFetcher<typeof recentLinksLoader>();
   const { load } = recentLinks;
@@ -49,10 +58,17 @@ export function ShortenerController() {
   return (
     <ShortenerView
       baseUrl={baseUrl}
-      shortenedUrl={actionData?.shortenedUrl}
-      error={actionData?.error}
+      shortenedUrl={isShortening ? undefined : actionData?.shortenedUrl}
+      error={isShortening ? undefined : actionData?.error}
+      isShortening={isShortening}
       recentLinks={recentLinks.data?.links}
       recentLinksError={recentLinks.data?.error}
+      isLoadingRecentLinks={
+        recentLinks.state === "loading" && !recentLinks.data
+      }
+      isRefreshingRecentLinks={
+        recentLinks.state === "loading" && !!recentLinks.data
+      }
     />
   );
 }

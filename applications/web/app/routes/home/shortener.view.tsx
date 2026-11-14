@@ -11,6 +11,9 @@ type ShortenerViewProps = {
   error?: string;
   recentLinks?: RecentLink[];
   recentLinksError?: string;
+  isShortening?: boolean;
+  isLoadingRecentLinks?: boolean;
+  isRefreshingRecentLinks?: boolean;
 };
 
 export function ShortenerView({
@@ -19,6 +22,9 @@ export function ShortenerView({
   error,
   recentLinks = [],
   recentLinksError,
+  isShortening = false,
+  isLoadingRecentLinks = false,
+  isRefreshingRecentLinks = false,
 }: ShortenerViewProps) {
   return (
     <main className="page-shell">
@@ -26,7 +32,13 @@ export function ShortenerView({
         <Card>
           <h1 className="page-title">URL Shortener</h1>
 
-          <Form method="post" className="shortener-form">
+          <Form
+            method="post"
+            className="shortener-form"
+            onSubmit={(event) => {
+              if (isShortening) event.preventDefault();
+            }}
+          >
             <TextInput
               type="text"
               name="url"
@@ -35,14 +47,16 @@ export function ShortenerView({
             />
 
             <div className="form-details">
-              <Button type="submit">SHORTEN IT</Button>
+              <Button type="submit" disabled={isShortening}>
+                {isShortening ? "Shortening…" : "SHORTEN IT"}
+              </Button>
               <p className="url-hint">
                 Your shortened URL will start with {baseUrl}
               </p>
             </div>
           </Form>
 
-          {shortenedUrl && (
+          {!isShortening && shortenedUrl && (
             <Card variant="result">
               <p className="result-label">Your shortened URL:</p>
               <a
@@ -56,15 +70,19 @@ export function ShortenerView({
             </Card>
           )}
 
-          {error && <InlineError message={error} />}
+          {!isShortening && error && <InlineError message={error} />}
         </Card>
         <Card className="history-card">
           <section aria-labelledby="recent-links-title">
             <h2 id="recent-links-title">Your Recent Links</h2>
+            {isLoadingRecentLinks && <p>Loading history…</p>}
+            {isRefreshingRecentLinks && <p>Refreshing…</p>}
             {recentLinksError && <InlineError message={recentLinksError} />}
-            {recentLinks.length === 0 && !recentLinksError && (
-              <p>Links you create in this browser will appear here.</p>
-            )}
+            {recentLinks.length === 0 &&
+              !recentLinksError &&
+              !isLoadingRecentLinks && (
+                <p>Links you create in this browser will appear here.</p>
+              )}
             {recentLinks.map((link) => (
               <Card variant="result" key={link.code}>
                 <a
