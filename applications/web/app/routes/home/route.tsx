@@ -3,6 +3,7 @@ import { data } from "react-router";
 import { ShortenerController } from "./shortener.controller";
 import { baseUrl } from "@url-shortener/engine";
 import type { ShortenURLError } from "@url-shortener/engine";
+import { urlCreationRateLimiter } from "../../lib/request-rate-limiter.server";
 
 import { shortenURL } from "../../bootstrap.server";
 
@@ -10,7 +11,7 @@ type ShorteningActionData =
   | { shortenedUrl: string; shortCode: string; error?: never; code?: never }
   | {
       error: string;
-      code: ShortenURLError["code"];
+      code: ShortenURLError["code"] | "rate_limited";
       shortenedUrl?: never;
       shortCode?: never;
     };
@@ -26,6 +27,20 @@ export async function action({
 }: Route.ActionArgs): Promise<
   ShorteningActionData | ReturnType<typeof data<ShorteningActionData>>
 > {
+  const rateLimit = urlCreationRateLimiter.consume();
+  if (!rateLimit.allowed) {
+    return data(
+      {
+        error: "Too many requests. Please try again shortly.",
+        code: "rate_limited",
+      },
+      {
+        status: 429,
+        headers: { "Retry-After": String(rateLimit.retryAfterSeconds) },
+      },
+    );
+  }
+
   const formData = await request.formData();
   const result = await shortenURL.execute(formData.get("url"));
 

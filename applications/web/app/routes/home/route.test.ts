@@ -22,6 +22,7 @@ const state = vi.hoisted(() => ({
   mode: "normal",
   records: new Map<string, string>(),
   clicks: new Map<string, number>(),
+  repositoryCalls: 0,
   generate: vi.fn(() => "NewCode001"),
 }));
 const shortenedUrls = state.records;
@@ -36,6 +37,7 @@ vi.mock("../../bootstrap.server", async () => {
   } = await import("@url-shortener/engine");
   const repository = {
     async incrementClicks(code: string) {
+      state.repositoryCalls += 1;
       if (state.mode === "recording-failure")
         return Err({ code: "storage_unavailable" as const });
       if (state.mode === "recording-throws") throw new Error("private failure");
@@ -43,6 +45,7 @@ vi.mock("../../bootstrap.server", async () => {
       return Ok(undefined);
     },
     async insert(link: import("@url-shortener/engine").ShortenedURL) {
+      state.repositoryCalls += 1;
       if (state.mode === "outage")
         return Err({ code: "storage_unavailable" as const });
       if (state.mode === "collisions" || state.records.has(link.code))
@@ -58,6 +61,7 @@ vi.mock("../../bootstrap.server", async () => {
         { code: "storage_unavailable" }
       >
     > {
+      state.repositoryCalls += 1;
       if (state.mode === "outage")
         return Err({ code: "storage_unavailable" as const });
       const raw = state.records.get(code);
@@ -79,9 +83,14 @@ vi.mock("../../bootstrap.server", async () => {
   };
 });
 let originalEntries: [string, string][];
+let routeTestNow = Date.now();
 
 beforeEach(() => {
+  vi.useFakeTimers();
+  routeTestNow += 60_000;
+  vi.setSystemTime(routeTestNow);
   state.mode = "normal";
+  state.repositoryCalls = 0;
   state.clicks.clear();
   state.generate.mockReset().mockReturnValue("NewCode001");
   originalEntries = [...shortenedUrls];
@@ -96,6 +105,7 @@ afterEach(() => {
     shortenedUrls.set(code, destination);
   }
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 async function submit(value?: string | File) {
@@ -107,6 +117,70 @@ async function submit(value?: string | File) {
 }
 
 describe("shortening route", () => {
+  it("limits creation before parsing and leaves redirects available after exhaustion", async () => {
+    state.mode = "outage";
+    const before = [...shortenedUrls];
+    const random = state.generate;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const result = await submit("https://example.com");
+      if (result instanceof Response) throw new Error("Expected action data");
+      expect(result.statusCode).toBe(503);
+    }
+
+    const body = new FormData();
+    body.set("url", "https://example.com/denied");
+    const request = new Request("http://localhost/", { method: "POST", body });
+    const parseBody = vi.spyOn(request, "formData");
+    const repositoryCalls = state.repositoryCalls;
+    const denied = await handler.query(request);
+    expect(denied instanceof Response).toBe(false);
+    if (denied instanceof Response) throw new Error("Expected action context");
+    expect(denied.statusCode).toBe(429);
+    expect(denied.actionHeaders?.home?.get("Retry-After")).toMatch(/^[1-9]\d*$/);
+    expect(denied.actionData?.home).toEqual({
+      code: "rate_limited",
+      error: "Too many requests. Please try again shortly.",
+    });
+    expect(parseBody).not.toHaveBeenCalled();
+    expect(random).toHaveBeenCalledTimes(20);
+    expect(state.repositoryCalls).toBe(repositoryCalls);
+    expect([...shortenedUrls]).toEqual(before);
+
+    const repeated = await handler.query(
+      new Request("http://localhost/", {
+        method: "POST",
+        body: new FormData(),
+      }),
+    );
+    expect(repeated instanceof Response).toBe(false);
+    if (repeated instanceof Response) throw new Error("Expected action context");
+    expect(repeated.statusCode).toBe(429);
+    expect(repeated.actionHeaders?.home?.get("Retry-After")).toBe(
+      denied.actionHeaders?.home?.get("Retry-After"),
+    );
+
+    state.mode = "normal";
+    const redirect = await handler.query(new Request("http://localhost/s/aa"));
+    expect(redirect instanceof Response && redirect.status).toBe(302);
+    expect(state.clicks.get("aa")).toBe(1);
+    expect([...shortenedUrls]).toEqual(before);
+  });
+
+  it("counts invalid submissions toward the shared creation allowance", async () => {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const result = await submit("");
+      if (result instanceof Response)
+        throw new Error("Expected validation data");
+      expect(result.statusCode).toBe(400);
+    }
+
+    const denied = await submit("https://example.com");
+    expect(denied instanceof Response).toBe(false);
+    if (denied instanceof Response) throw new Error("Expected action context");
+    expect(denied.statusCode).toBe(429);
+    expect(state.generate).not.toHaveBeenCalled();
+  });
+
   it("preserves successful response, loader prefix, and redirect behavior", async () => {
     state.generate.mockReturnValue("NewCode001");
     const destination = "https://example.com/article?ref=test#section";

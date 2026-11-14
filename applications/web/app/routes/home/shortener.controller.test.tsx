@@ -57,6 +57,31 @@ describe("ShortenerController", () => {
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
+  it("shows a 429 inline, preserves the URL, and restores submission after pending", async () => {
+    const user = userEvent.setup();
+    const error = "Too many requests. Please try again shortly.";
+    let finishAction!: (value: ReturnType<typeof data>) => void;
+    const action = vi.fn(
+      () =>
+        new Promise<ReturnType<typeof data>>(
+          (resolve) => (finishAction = resolve),
+        ),
+    );
+    renderController(action);
+
+    const input = await screen.findByRole("textbox");
+    await user.type(input, "https://example.com/keep-me");
+    await user.click(screen.getByRole("button", { name: "SHORTEN IT" }));
+    expect(
+      await screen.findByRole("button", { name: "Shortening…" }),
+    ).toBeDisabled();
+
+    finishAction(data({ error }, { status: 429 }));
+    expect(await screen.findByText(error)).toBeVisible();
+    expect(input).toHaveValue("https://example.com/keep-me");
+    expect(screen.getByRole("button", { name: "SHORTEN IT" })).toBeEnabled();
+  });
+
   it("displays the loader prefix before any submission", async () => {
     renderController();
 

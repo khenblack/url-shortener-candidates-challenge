@@ -159,6 +159,16 @@ retaining the browser history during refresh and hiding stale form feedback whil
 a new shortening request is pending. Controlled route tests cover pending,
 completion, duplicate submission, and refresh behavior.
 
+### Creation abuse prevention
+
+URL creation now uses a shared in-process fixed-window allowance of 20 attempts
+per 60 seconds. The HTTP route consumes an attempt before parsing input, so
+invalid submissions and later shortening failures count. Excess requests receive
+HTTP 429, a rounded-up `Retry-After` value, and inline feedback. Redirects and
+browser history remain available. The allowance resets on process restart and is
+not shared across processes. Deterministic clock and route tests cover expiry,
+rejections, request ordering, and preserved form input.
+
 ## Feedback
 
 <!-- Any feedback on the challenge? Was it clear? Too easy/hard? Suggestions? -->

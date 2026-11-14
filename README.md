@@ -106,6 +106,13 @@ Storage errors never become missing links or expose database details. Invalid st
 destinations also fail safely. The form preserves entered text and replaces prior
 success feedback with the latest error.
 
+URL creation is limited at the server boundary to 20 attempts per 60-second
+fixed window shared by all callers in one web process. Invalid submissions and
+attempts that fail after admission count toward the limit; excess attempts return
+HTTP 429 with `Retry-After` and inline feedback. Redirects and recent-link history
+are not limited. The in-memory allowance resets on process restart and is not
+coordinated between processes.
+
 ## Explicit migrations
 
 The engine module owns `infrastructure/persistence/schema.ts`. Web owns
