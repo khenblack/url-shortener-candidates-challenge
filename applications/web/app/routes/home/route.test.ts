@@ -21,6 +21,7 @@ const handler = createStaticHandler([
 const state = vi.hoisted(() => ({
   mode: "normal",
   records: new Map<string, string>(),
+  clicks: new Map<string, number>(),
   generate: vi.fn(() => "NewCode001"),
 }));
 const shortenedUrls = state.records;
@@ -31,8 +32,16 @@ vi.mock("../../bootstrap.server", async () => {
     ShortenedURL,
     ShortenURLUseCase,
     ResolveShortenedURLUseCase,
+    RedirectShortenedURLUseCase,
   } = await import("@url-shortener/engine");
   const repository = {
+    async incrementClicks(code: string) {
+      if (state.mode === "recording-failure")
+        return Err({ code: "storage_unavailable" as const });
+      if (state.mode === "recording-throws") throw new Error("private failure");
+      state.clicks.set(code, (state.clicks.get(code) ?? 0) + 1);
+      return Ok(undefined);
+    },
     async insert(link: import("@url-shortener/engine").ShortenedURL) {
       if (state.mode === "outage")
         return Err({ code: "storage_unavailable" as const });
@@ -62,6 +71,10 @@ vi.mock("../../bootstrap.server", async () => {
   };
   return {
     shortenURL: new ShortenURLUseCase({ generate: state.generate }, repository),
+    redirectShortenedURL: new RedirectShortenedURLUseCase(
+      new ResolveShortenedURLUseCase(repository),
+      repository,
+    ),
     resolveShortenedURL: new ResolveShortenedURLUseCase(repository),
   };
 });
@@ -69,6 +82,7 @@ let originalEntries: [string, string][];
 
 beforeEach(() => {
   state.mode = "normal";
+  state.clicks.clear();
   state.generate.mockReset().mockReturnValue("NewCode001");
   originalEntries = [...shortenedUrls];
   shortenedUrls.clear();
@@ -101,7 +115,10 @@ describe("shortening route", () => {
 
     expect(result.statusCode).toBe(200);
     expect(result.actionData).toEqual({
-      home: { shortenedUrl: `${baseUrl}/s/NewCode001` },
+      home: {
+        shortCode: "NewCode001",
+        shortenedUrl: `${baseUrl}/s/NewCode001`,
+      },
     });
     expect(result.loaderData).toEqual({
       home: { baseUrl: baseUrl ? `${baseUrl}/s/` : "-" },
@@ -290,4 +307,35 @@ describe("shortening route", () => {
       data: "Service temporarily unavailable. Please try again.",
     });
   });
+});
+
+describe("redirect click counting", () => {
+  it("counts repeat GETs but excludes HEAD, POST, missing and invalid codes", async () => {
+    await handler.query(new Request("http://localhost/s/aa"));
+    await handler.query(new Request("http://localhost/s/aa"));
+    expect(state.clicks.get("aa")).toBe(2);
+    const head = await handler.query(
+      new Request("http://localhost/s/aa", { method: "HEAD" }),
+    );
+    expect(head instanceof Response && head.status).toBe(302);
+    const post = await handler.query(
+      new Request("http://localhost/s/aa", { method: "POST" }),
+    );
+    expect(!(post instanceof Response) && post.statusCode).toBe(405);
+    await handler.query(new Request("http://localhost/s/missing"));
+    await handler.query(new Request("http://localhost/s/%20"));
+    expect([...state.clicks]).toEqual([["aa", 2]]);
+  });
+  it.each(["recording-failure", "recording-throws"])(
+    "preserves 302 on %s",
+    async (mode) => {
+      state.mode = mode;
+      const result = await handler.query(new Request("http://localhost/s/aa"));
+      expect(result instanceof Response && result.status).toBe(302);
+      expect(result instanceof Response && result.headers.get("Location")).toBe(
+        "https://existing.example/path",
+      );
+      expect(state.clicks.size).toBe(0);
+    },
+  );
 });

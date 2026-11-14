@@ -1,13 +1,35 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRoutesStub, data } from "react-router";
 import type { ActionFunction, ActionFunctionArgs } from "react-router";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShortenerController } from "./shortener.controller";
 import { action as shortenAction } from "./route";
 
-function renderController(action?: ActionFunction) {
+import { readRecentCodes, writeRecentCodes } from "./recent-links-storage";
+const recentRequests: string[][] = [];
+beforeEach(() => {
+  localStorage.clear();
+  recentRequests.length = 0;
+});
+afterEach(() => localStorage.clear());
+
+function renderController(action?: ActionFunction, clickCount = () => 2) {
   const Stub = createRoutesStub([
+    {
+      path: "/recent-links",
+      loader: ({ request }) => {
+        const codes = new URL(request.url).searchParams.getAll("code");
+        recentRequests.push(codes);
+        return {
+          links: codes.map((code) => ({
+            code,
+            destination: `https://example.com/${code}`,
+            clickCount: clickCount(),
+          })),
+        };
+      },
+    },
     {
       path: "/",
       Component: ShortenerController,
@@ -106,4 +128,59 @@ describe("ShortenerController", () => {
     expect(input).toHaveValue("https://example.com/keep-me");
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
+});
+
+it("loads only browser selections again after remount", async () => {
+  writeRecentCodes(localStorage, ["legacy-!", "old"]);
+  const first = renderController();
+  expect(await screen.findByText("https://example.com/legacy-!")).toBeVisible();
+  expect(screen.getAllByText("2 clicks")).toHaveLength(2);
+  expect(recentRequests).toEqual([["legacy-!", "old"]]);
+  first.unmount();
+  renderController();
+  await screen.findByText("https://example.com/old");
+  expect(recentRequests).toEqual([
+    ["legacy-!", "old"],
+    ["legacy-!", "old"],
+  ]);
+});
+
+it("adds successful creations first and refreshes a duplicate without growing history", async () => {
+  writeRecentCodes(localStorage, ["old", "aa"]);
+  const user = userEvent.setup();
+  renderController(() => ({
+    shortenedUrl: "https://sho.rt/s/aa",
+    shortCode: "aa",
+  }));
+  await screen.findByText("https://example.com/old");
+  await user.type(screen.getByRole("textbox"), "https://example.com/aa");
+  await user.click(screen.getByRole("button", { name: "SHORTEN IT" }));
+  await screen.findByText("Your shortened URL:");
+  expect(readRecentCodes(localStorage)).toEqual(["aa", "old"]);
+  expect(recentRequests.at(-1)).toEqual(["aa", "old"]);
+});
+
+it("does not fetch a global listing for an empty browser", async () => {
+  renderController();
+  await screen.findByRole("heading", { name: "Your Recent Links" });
+  fireEvent.focus(window);
+  expect(recentRequests).toEqual([]);
+});
+
+it("refreshes displayed counts when returning to the app window", async () => {
+  writeRecentCodes(localStorage, ["aa"]);
+  let clicks = 2;
+  const view = renderController(undefined, () => clicks);
+  expect(await screen.findByText("2 clicks")).toBeVisible();
+
+  clicks = 3;
+  fireEvent.focus(window);
+
+  expect(await screen.findByText("3 clicks")).toBeVisible();
+  expect(recentRequests).toEqual([["aa"], ["aa"]]);
+  expect(readRecentCodes(localStorage)).toEqual(["aa"]);
+
+  view.unmount();
+  fireEvent.focus(window);
+  expect(recentRequests).toHaveLength(2);
 });

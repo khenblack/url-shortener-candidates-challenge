@@ -7,11 +7,12 @@ import type { ShortenURLError } from "@url-shortener/engine";
 import { shortenURL } from "../../bootstrap.server";
 
 type ShorteningActionData =
-  | { shortenedUrl: string; error?: never; code?: never }
+  | { shortenedUrl: string; shortCode: string; error?: never; code?: never }
   | {
       error: string;
       code: ShortenURLError["code"];
       shortenedUrl?: never;
+      shortCode?: never;
     };
 
 export function loader() {
@@ -42,6 +43,7 @@ export async function action({
   }
 
   return {
+    shortCode: result.value.code,
     shortenedUrl: `${baseUrl}/s/${result.value.code}`,
   };
 }

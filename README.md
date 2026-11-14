@@ -146,3 +146,29 @@ shortener integration. Application tests remain colocated with their source file
 there is no separate `applications/web/tests` directory.
 
 Browser checks remain necessary for visual layout changes.
+
+## Click statistics and recent links
+
+Each successful GET to `/s/:code` records one redirect attempt, including repeat
+visits and bots. HEAD, rejected requests, and metadata reads do not add clicks.
+Recording is best effort: a resolved destination still returns its 302 redirect
+if the count update fails. Counts do not prove that the destination loaded.
+
+Apply the explicit `0001_click_statistics` migration with `pnpm db:migrate` before
+running this version. It adds a zero-default counter without changing existing
+codes or destinations. PostgreSQL increments the counter with one atomic UPDATE.
+
+The home page remembers the latest 50 distinct codes in this browser's
+`localStorage` and loads their destinations and total counts on page load,
+successful creation, and when the app window regains focus. A repeated code moves to the front. “Your Recent Links” is
+browser history, not an account or ownership check; clearing browser storage
+removes the selection. Empty history never requests a global listing. Storage
+restrictions leave shortening usable, with history retained only for the current
+page when writing is unavailable. Returning after opening a short link refreshes
+the displayed counts from the server without requiring a page reload.
+
+Feature checks cover application counting, HTTP exclusions and failure behavior,
+selected-code queries, SQL shape, and browser-history persistence. The migration
+was generated and reviewed structurally; no live PostgreSQL checks were run for
+this feature. Actual concurrent updates and restart durability remain unverified
+against a running database in these feature checks.

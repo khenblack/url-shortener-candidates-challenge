@@ -19,16 +19,26 @@ describe("ShortenedURL", () => {
     expect(shortened.destination.value).toBe("https://example.com/path");
   });
 
-  it.each(["sftp://example.com/file", "ftp://example.com", "mailto:person@example.com", "javascript:alert(1)"])(
+  it.each([
+    "sftp://example.com/file",
+    "ftp://example.com",
+    "mailto:person@example.com",
+    "javascript:alert(1)",
+  ])(
     "rejects a valid generic URL with an unsupported protocol: %s",
     (input) => {
       const destination = URL.safeParse(input);
       if (!destination.ok) throw new Error("Expected a valid generic URL");
       const expected = {
         ok: false,
-        error: { code: "unsupported_protocol", message: "Only http:// and https:// URLs are supported." },
+        error: {
+          code: "unsupported_protocol",
+          message: "Only http:// and https:// URLs are supported.",
+        },
       };
-      expect(ShortenedURL.validateDestination(destination.value)).toEqual(expected);
+      expect(ShortenedURL.validateDestination(destination.value)).toEqual(
+        expected,
+      );
       expect(ShortenedURL.create("ab", destination.value)).toEqual(expected);
     },
   );
@@ -40,7 +50,11 @@ describe("ShortenedURL", () => {
       if (!destination.ok) throw new Error("Expected a parseable generic URL");
       expect(ShortenedURL.create("ab", destination.value)).toEqual({
         ok: false,
-        error: { code: "invalid_url", message: "Enter a complete, valid URL starting with http:// or https://." },
+        error: {
+          code: "invalid_url",
+          message:
+            "Enter a complete, valid URL starting with http:// or https://.",
+        },
       });
     },
   );
@@ -57,3 +71,16 @@ function checkTypes(shortened: ShortenedURL) {
   shortened.destination = URL.safeParse("https://example.com");
 }
 void checkTypes;
+
+it("defaults new links to zero clicks and rejects invalid restored counts", () => {
+  const destination = ShortenedURL.parseDestination("https://example.com");
+  if (!destination.ok) throw Error("Invalid fixture");
+  const created = ShortenedURL.create("aa", destination.value);
+  expect(created.ok && created.value.clickCount).toBe(0);
+  for (const count of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, NaN]) {
+    expect(ShortenedURL.create("aa", destination.value, count)).toEqual({
+      ok: false,
+      error: { code: "invalid_click_count", message: "Invalid click count" },
+    });
+  }
+});

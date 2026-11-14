@@ -3,7 +3,11 @@ import { Err, Ok } from "../../../shared/types/result";
 import type { Result } from "../../../shared/types/result";
 
 export type ShortenedURLValidationError = {
-  code: "required" | "invalid_url" | "unsupported_protocol";
+  code:
+    | "required"
+    | "invalid_url"
+    | "unsupported_protocol"
+    | "invalid_click_count";
   message: string;
 };
 
@@ -17,6 +21,7 @@ export class ShortenedURL {
   private constructor(
     public readonly code: string,
     public readonly destination: URL,
+    public readonly clickCount: number,
   ) {
     Object.freeze(this);
   }
@@ -56,11 +61,17 @@ export class ShortenedURL {
   static create(
     code: string,
     destination: URL,
+    clickCount = 0,
   ): Result<ShortenedURL, ShortenedURLValidationError> {
-    // Recheck here so direct callers cannot bypass the aggregate's invariant.
+    if (!Number.isSafeInteger(clickCount) || clickCount < 0) {
+      return Err({
+        code: "invalid_click_count",
+        message: "Invalid click count",
+      });
+    }
     const validated = this.validateDestination(destination);
     if (!validated.ok) return validated;
-    return Ok(new ShortenedURL(code, validated.value));
+    return Ok(new ShortenedURL(code, validated.value, clickCount));
   }
 
   private static validateProtocol(

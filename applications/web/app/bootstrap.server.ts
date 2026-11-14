@@ -1,6 +1,8 @@
 import { PostgresDatabase } from "@url-shortener/database";
 import {
   ResolveShortenedURLUseCase,
+  RedirectShortenedURLUseCase,
+  GetRecentLinksUseCase,
   ShortenURLUseCase,
 } from "@url-shortener/engine";
 
@@ -14,6 +16,8 @@ import { readDatabaseConfig } from "../database/config";
 export type ApplicationDependencies = {
   shortenURL: ShortenURLUseCase;
   resolveShortenedURL: ResolveShortenedURLUseCase;
+  redirectShortenedURL: RedirectShortenedURLUseCase;
+  getRecentLinks: GetRecentLinksUseCase;
   close: () => Promise<void>;
 };
 
@@ -33,11 +37,21 @@ export function bootstrapApplication(): ApplicationDependencies {
   );
 
   return {
+    redirectShortenedURL: new RedirectShortenedURLUseCase(
+      resolveShortenedURL,
+      postgresShortenerRepository,
+    ),
+    getRecentLinks: new GetRecentLinksUseCase(postgresShortenerRepository),
     shortenURL,
     resolveShortenedURL,
     close: (): Promise<void> => database.close(),
   };
 }
 
-export const { shortenURL, resolveShortenedURL, close } =
-  bootstrapApplication();
+export const {
+  shortenURL,
+  resolveShortenedURL,
+  redirectShortenedURL,
+  getRecentLinks,
+  close,
+} = bootstrapApplication();

@@ -8,6 +8,13 @@
       "when": 1794672863018,
       "tag": "0000_thick_omega_sentinel",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794681376162,
+      "tag": "0001_click_statistics",
+      "breakpoints": true
     }
   ]
 }

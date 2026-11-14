@@ -63,6 +63,37 @@ body {
   text-align: center;
 }
 
+.shortener-layout {
+  display: grid;
+  width: 100%;
+  max-width: 34rem;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.shortener-layout > .shortener-card {
+  min-width: 0;
+  max-width: none;
+}
+
+.history-card h2 {
+  margin: 0 0 1rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+@media (min-width: 64rem) {
+  .shortener-layout {
+    max-width: 66rem;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  }
+
+  .shortener-layout > .history-card {
+    max-height: max(24rem, calc(100dvh - 6rem));
+    overflow-y: auto;
+  }
+}
+
 .shortener-form {
   display: flex;
   flex-direction: column;

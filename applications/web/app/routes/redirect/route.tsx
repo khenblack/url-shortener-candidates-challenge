@@ -1,9 +1,14 @@
 import { redirect } from "react-router";
 import type { Route } from "./+types/route";
-import { resolveShortenedURL } from "../../bootstrap.server";
+import {
+  resolveShortenedURL,
+  redirectShortenedURL,
+} from "../../bootstrap.server";
 
-export async function loader({ params }: Route.LoaderArgs) {
-  const result = await resolveShortenedURL.execute(params.code);
+export async function loader({ params, request }: Route.LoaderArgs) {
+  const useCase =
+    request.method === "GET" ? redirectShortenedURL : resolveShortenedURL;
+  const result = await useCase.execute(params.code);
 
   if (!result.ok) {
     throw new Response(result.error.message, {

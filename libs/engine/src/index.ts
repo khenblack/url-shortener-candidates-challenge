@@ -18,3 +18,11 @@ export type {
   StorageUnavailable,
 } from "./modules/url-shortener/application/ports/shortener-repository";
 export type { ShortenURLError } from "./modules/url-shortener/application/usecases/shorten-url";
+
+export { RedirectShortenedURLUseCase } from "./modules/url-shortener/application/usecases/redirect-shortened-url";
+export { GetRecentLinksUseCase } from "./modules/url-shortener/application/usecases/get-recent-links";
+export type { RecentLink } from "./modules/url-shortener/application/usecases/get-recent-links";
+export type {
+  ClickRecorder,
+  RecentLinksRepository,
+} from "./modules/url-shortener/application/ports/shortener-repository";

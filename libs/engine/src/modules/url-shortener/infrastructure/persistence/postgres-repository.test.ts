@@ -122,3 +122,62 @@ describe("PostgresShortenerRepository", () => {
     expect(f.db.select).toHaveBeenCalledOnce();
   });
 });
+
+// Query compilation proves SQL shape only; it is not a live concurrency check.
+describe("statistics persistence", () => {
+  it("increments in a single parameterized UPDATE without reading the count", async () => {
+    const { drizzle } = await import("drizzle-orm/node-postgres");
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    const database = drizzle({ query } as never, { schema });
+    const repository = new PostgresShortenerRepository(database);
+    expect(await repository.incrementClicks("legacy-!")).toEqual(Ok(undefined));
+    expect(query).toHaveBeenCalledOnce();
+    const [statement, parameters] = query.mock.calls[0];
+    expect(statement.text).toBe(
+      'update "shortened_urls" set "click_count" = "shortened_urls"."click_count" + 1 where "shortened_urls"."code" = $1',
+    );
+    expect(parameters).toEqual(["legacy-!"]);
+  });
+
+  it("selects only requested codes and restores persisted counts", async () => {
+    const where = vi.fn().mockResolvedValue([
+      {
+        code: "legacy-!",
+        destination: "https://example.com/path",
+        clickCount: 12,
+      },
+    ]);
+    const select = vi.fn(() => ({ from: () => ({ where }) }));
+    const repository = new PostgresShortenerRepository({
+      select,
+    } as unknown as NodePgDatabase<typeof schema>);
+    expect(await repository.findByCodes([])).toEqual(Ok([]));
+    expect(select).not.toHaveBeenCalled();
+    const result = await repository.findByCodes(["legacy-!"]);
+    expect(result.ok && result.value[0].clickCount).toBe(12);
+    const { PgDialect } = await import("drizzle-orm/pg-core");
+    const query = new PgDialect().sqlToQuery(where.mock.calls[0][0]);
+    expect(query.sql).toBe('"shortened_urls"."code" in ($1)');
+    expect(query.params).toEqual(["legacy-!"]);
+  });
+
+  it("maps increment and selected-query failures without leaking details", async () => {
+    const database = {
+      update: () => {
+        throw Error("private update detail");
+      },
+      select: () => {
+        throw Error("private query detail");
+      },
+    };
+    const repository = new PostgresShortenerRepository(
+      database as unknown as NodePgDatabase<typeof schema>,
+    );
+    expect(await repository.incrementClicks("aa")).toEqual(
+      Err({ code: "storage_unavailable" }),
+    );
+    expect(await repository.findByCodes(["aa"])).toEqual(
+      Err({ code: "storage_unavailable" }),
+    );
+  });
+});

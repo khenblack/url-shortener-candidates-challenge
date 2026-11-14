@@ -36,7 +36,7 @@ Decisions for the [database foundation](specs/database-foundation.md):
 
 ## What I Would Do With More Time
 
-<!-- What would you tackle next if you had more time? -->
+- **Refine interface segregation:** split the existing `ShortenerRepository` into narrower read and write ports so shortening depends only on `insert` and resolution only on `findByCode`. This would also simplify test doubles by removing unused methods. The PostgreSQL adapter could continue implementing both ports, as it already does for the separate click-recording and recent-links interfaces.
 
 ## AI Usage
 
@@ -132,6 +132,24 @@ Three total attempts bound collision handling. Only a code uniqueness conflict r
 other storage/configuration failures return safe HTTP 503 messages. PostgreSQL remains
 the sole runtime store, while lazy server composition keeps home rendering independent
 of database availability. Every successful submission gets its own persisted link.
+
+### Click statistics
+
+I approved [the click statistics specification](specs/click-statistics.md) and
+requested a focused implementation without unrelated refactoring, branches,
+commits, dependencies, or live PostgreSQL verification. AI assisted with separate
+planning and implementation, retaining the engine ports/use cases and web
+controller/view boundaries. The feature adds best-effort redirect counting,
+selected-code metadata reads, browser-local recent history, and an explicit
+zero-default migration. Deterministic tests first failed for missing counting and
+storage behavior before implementation.
+
+Unit and route tests check repeated GETs, excluded requests, failed-count
+redirects, selected-code filtering, and browser persistence. SQL-shape checks and
+migration inspection are structural evidence only; real PostgreSQL concurrency
+and restart durability were not verified for this feature. The existing six
+bootstrap tests fail because their lazy-initialization expectations differ from
+the current eager bootstrap; this unrelated behavior was left unchanged.
 
 ## Feedback
 

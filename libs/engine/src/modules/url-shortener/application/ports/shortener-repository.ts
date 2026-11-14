@@ -12,3 +12,13 @@ export interface ShortenerRepository {
     code: string,
   ): Promise<Result<ShortenedURL | null, StorageUnavailable>>;
 }
+
+export interface ClickRecorder {
+  incrementClicks(code: string): Promise<Result<void, StorageUnavailable>>;
+}
+
+export interface RecentLinksRepository {
+  findByCodes(
+    codes: readonly string[],
+  ): Promise<Result<ShortenedURL[], StorageUnavailable>>;
+}
